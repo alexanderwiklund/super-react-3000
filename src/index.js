@@ -8,6 +8,34 @@ const React = {
 };
 
 /**
+ * Parse a prop and attach it to the element if applicable.
+ * @param {Element} element 
+ * @param {string} key 
+ * @param {*} value 
+ */
+const parseProp = (element, propName, value) => {
+  if (typeof value == 'function' && propName.startsWith('on')) {
+      const eventType = propName.slice(2).toLowerCase();
+      element.__eventHandlers = element.__eventHandlers || {};
+      element.removeEventListener(eventType, element.__eventHandlers[eventType]);
+      element.__eventHandlers[eventType] = value;
+      element.addEventListener(eventType, element.__eventHandlers[eventType]);
+  }
+  else if (propName == 'checked' || propName == 'value' || propName == 'className') {
+      element[propName] = value;
+  }
+  else if (propName == 'style' && typeof value == 'object') {
+      Object.assign(element.style, value);
+  }
+  else if (propName == 'ref' && typeof value == 'function') {
+      value(element);
+  }
+  else if (typeof value != 'object' && typeof value != 'function') {
+      element.setAttribute(propName, value);
+  }
+};
+
+/**
  * Turn a vDom node into an actual DOM node,
  * appending to a parent node if required.
  * 
@@ -42,6 +70,10 @@ const render = (vDom, parent=null) => {
       element.appendChild(renderedChild);
     })
 
+    Object.entries(vDom.props).forEach(([propName, value]) => {
+      parseProp(element, propName, value);
+    });
+
     return mount(element);
   }
   else {
@@ -53,7 +85,13 @@ render('Hello World!', document.getElementById('one'));
 
 const list = (
   <ul className="list">
-    <li className="list_item">One</li>
+    <li className="list_item"
+      style={ { color: 'red' } }
+      ref={(element) => {
+        console.debug(`Did we just add styling to our element?`, element.style);
+      }}
+      onClick={(event) => console.debug(`Received click!`, event)}
+    >One</li>
     <li className="list_item">Two</li>
   </ul>
 );
