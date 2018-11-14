@@ -30,6 +30,9 @@ const parseProp = (element, propName, value) => {
   else if (propName == 'ref' && typeof value == 'function') {
       value(element);
   }
+  else if (propName == 'key') {
+    element.__key = value;
+  }
   else if (typeof value != 'object' && typeof value != 'function') {
       element.setAttribute(propName, value);
   }
@@ -81,19 +84,111 @@ const render = (vDom, parent=null) => {
   }
 };
 
+/**
+ * Given an element and a vDom of the same type compare the children of each of them,
+ * update the ones that differ and remove any nodes that do not exist in the vDom anymore.
+ * @param {Element} element 
+ * @param {vDom} vDom 
+ * @returns {Element}
+ */
+const childReconciliation = (element, vDom) => {
+  const pool = {};
+  const active = document.activeElement;
+
+  //Add all previous child nodes to the pool
+  [].concat(...element.childNodes).forEach((child, index) => {
+    const key = child.__key || `__index_${index}`;
+    pool[key] = child;
+  });
+
+  //Render all vDom nodes. If the same key is in the pool we've already rendered it
+  //and can remove it from the pool.
+  [].concat(...vDom.children).forEach((child, index) => {
+    const key = child.props && child.props.key || `__index_${index}`;
+    element.appendChild(pool[key] ? patch(pool[key], child) : render(child, element));
+    delete pool[key];
+  });
+
+  Object.values(pool).forEach((child) => child.remove());
+  Object.values(element.attributes).forEach((attribute) => {
+    element.removeAttribute(attribute.name)
+  });
+  Object.entries(vDom.props).forEach(([propName, value]) => {
+    parseProp(element, propName, value);
+  });
+
+  active.focus();
+  return element;
+}
+
+/**
+ * Compare an updated vDom with the current DOM structure, only rerendering each node
+ * if it's different from the current node.
+ * @param {Element} element 
+ * @param {vDom} vDom 
+ * @param {Element} parent 
+ * @returns {Element}
+ */
+const patch = (element, vDom, parent=element.parentNode) => {
+  const replaceChild = newElement => {
+    parent.replaceChild(newElement, element);
+    return newElement;
+  };
+  const returnElement = element => element;
+  const replace = parent ? replaceChild : returnElement;
+
+  //Comparing simple vDom with simple Text node: Compare content.
+  if (typeof vDom != 'object' && element instanceof Text) {
+    return element.textContent != vDom ? replace(render(vDom, parent)) : element;
+  }
+  //Comparing complex vDom with simple Text node: Full rerender.
+  else if (typeof vDom == 'object' && element instanceof Text) {
+    return replace(render(vDom, parent));
+  }
+  //Comparing complex vDom with complex DOM node of different type: Full rerender.
+  else if (typeof vDom == 'object' && element.nodeName != vDom.type.toUpperCase()) {
+    return replace(render(vDom, parent));
+  }
+  //Comparing complex vDom with complex DOM node of the same type: Reconciliation.
+  else if (typeof vDom == 'object' && element.nodeName == vDom.type.toUpperCase()) {
+    return childReconciliation(element, vDom);
+  }
+};
+
 render('Hello World!', document.getElementById('one'));
 
 const list = (
   <ul className="list">
     <li className="list_item"
+      key="one"
       style={ { color: 'red' } }
       ref={(element) => {
         console.debug(`Did we just add styling to our element?`, element.style);
       }}
       onClick={(event) => console.debug(`Received click!`, event)}
     >One</li>
-    <li className="list_item">Two</li>
+    <li className="list_item"
+      key="two"
+    >Two</li>
   </ul>
 );
 
-render(list, document.getElementById('two'));
+const currentDOM = render(list, document.getElementById('two'));
+
+const newList = (
+  <ul className="list">
+    <li className="list_item"
+      key="one"
+      style={ { color: 'blue' } }
+      ref={(element) => {
+        console.debug(`We patched our element, text should be blue instead.`, element.style);
+      }}
+      onClick={(event) => console.debug(`Received click on a patched element!`, event)}
+    >One</li>
+    <li className="list_item"
+      key="three"
+    >Three</li>
+  </ul>
+);
+
+setTimeout(() => patch(currentDOM, newList), 5000);
