@@ -48,9 +48,6 @@ const parseProp = (element, propName, value) => {
  * @returns {Element}
  */
 const render = (vDom, parent=null) => {
-  //Remove any previous content since we're rerendering.
-  if (parent) parent.textContent = '';
-
   const appentToParent = element => parent.appendChild(element);
   const returnElement = element => element;
   const mount = parent ? appentToParent : returnElement;
@@ -62,6 +59,9 @@ const render = (vDom, parent=null) => {
   else if (typeof vDom == 'boolean' || vDom === null) {
     console.debug(`Rendering bool or null node ${vDom} (an empty node)`);
     return mount(document.createTextNode(''));
+  }
+  else if (typeof vDom == 'object' && typeof vDom.type == 'function') {
+    return Component.render(vDom, parent);
   }
   else if (typeof vDom == 'object' && typeof vDom.type == 'string') {
     console.debug(`Rendering node of type ${vDom.type} and all child nodes`);
@@ -109,7 +109,13 @@ const childReconciliation = (element, vDom) => {
     delete pool[key];
   });
 
-  Object.values(pool).forEach((child) => child.remove());
+  Object.values(pool).forEach((child) => {
+    const instance = child.__instance;
+    if (instance) {
+      instance.componentWillUnmount();
+    }
+    child.remove();
+  });
   Object.values(element.attributes).forEach((attribute) => {
     element.removeAttribute(attribute.name)
   });
@@ -131,14 +137,18 @@ const childReconciliation = (element, vDom) => {
  */
 const patch = (element, vDom, parent=element.parentNode) => {
   const replaceChild = newElement => {
-    parent.replaceChild(newElement, element);
+    element.replaceWith(newElement);
     return newElement;
   };
   const returnElement = element => element;
   const replace = parent ? replaceChild : returnElement;
 
+  //Components have their own patch method.
+  if (typeof vDom == 'object' && typeof vDom.type == 'function') {
+    return Component.patch(element, vDom, parent);
+  }
   //Comparing simple vDom with simple Text node: Compare content.
-  if (typeof vDom != 'object' && element instanceof Text) {
+  else if (typeof vDom != 'object' && element instanceof Text) {
     return element.textContent != vDom ? replace(render(vDom, parent)) : element;
   }
   //Comparing complex vDom with simple Text node: Full rerender.
@@ -155,40 +165,88 @@ const patch = (element, vDom, parent=element.parentNode) => {
   }
 };
 
-render('Hello World!', document.getElementById('one'));
+class Component {
+  constructor(props) {
+    this.props = props || {};
+    this.state = null;
+  }
 
-const list = (
-  <ul className="list">
-    <li className="list_item"
-      key="one"
-      style={ { color: 'red' } }
-      ref={(element) => {
-        console.debug(`Did we just add styling to our element?`, element.style);
-      }}
-      onClick={(event) => console.debug(`Received click!`, event)}
-    >One</li>
-    <li className="list_item"
-      key="two"
-    >Two</li>
-  </ul>
-);
+  static render(vDom, parent=null) {
+    const props = Object.assign({}, vDom.props, {children: vDom.children});
 
-const currentDOM = render(list, document.getElementById('two'));
+    if (Component.isPrototypeOf(vDom.type)) {
+      const instance = new (vDom.type)(props);
+      instance.componentWillMount();
+      instance.base = render(instance.render(), parent);
+      instance.base.__instance = instance;
+      instance.base.__key = vDom.props.key;
+      instance.componentDidMount();
+      return instance.base;
+    }
+    return render(vDom.type(props), parent);
+  }
 
-const newList = (
-  <ul className="list">
-    <li className="list_item"
-      key="one"
-      style={ { color: 'blue' } }
-      ref={(element) => {
-        console.debug(`We patched our element, text should be blue instead.`, element.style);
-      }}
-      onClick={(event) => console.debug(`Received click on a patched element!`, event)}
-    >One</li>
-    <li className="list_item"
-      key="three"
-    >Three</li>
-  </ul>
-);
+  static patch(element, vDom, parent=element.parentNode) {
+    const props = Object.assign({}, vDom.props, {children: vDom.children});
 
-setTimeout(() => patch(currentDOM, newList), 5000);
+    if (element.__instance && element.__instance.constructor == vDom.type) {
+      element.__instance.componentWillReceiveProps(props);
+      element.__instance.props = props;
+      return patch(element, element.__instance.render(), parent);
+    }
+    else if (Component.isPrototypeOf(vDom.type)) {
+      const replaceChild = newElement => {
+        element.replaceWith(newElement);
+        return newElement;
+      };
+      const returnElement = element => element;
+      const replace = parent ? replaceChild : returnElement;
+
+      const newElement = Component.render(vDom, parent);
+      return replace(newElement);
+    }
+    else if (!Component.isPrototypeOf(vDom.type)) {
+      return patch(element, vDom.type(props), parent);
+    }
+  }
+
+  setState(nextState) {
+    if (this.base && this.shouldComponentUpdate(this.props, nextState)) {
+      const prevState = this.state;
+      this.componentWillUpdate(this.props, nextState);
+      this.state = nextState;
+      patch(this.base, this.render());
+      this.componentDidUpdate(this.props, prevState);
+    } else {
+      this.state = nextState;
+    }
+  }
+
+  shouldComponentUpdate(nextProps, nextState) {
+    return nextProps != this.props || nextState != this.state;
+  }
+
+  componentWillReceiveProps(nextProps) {
+    return undefined;
+  }
+
+  componentWillUpdate(nextProps, nextState) {
+    return undefined;
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    return undefined;
+  }
+
+  componentWillMount() {
+    return undefined;
+  }
+
+  componentDidMount() {
+    return undefined;
+  }
+
+  componentWillUnmount() {
+    return undefined;
+  }
+}
